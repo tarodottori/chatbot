@@ -19,7 +19,7 @@ if not gemini_api_key:
     st.info("Please add your Gemini API key to continue.", icon="🗝️")
 else:
     # Gemini API endpoint
-    GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:streamGenerateContent"
+    GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent"
     
     # Create a session state variable to store the chat messages.
     if "messages" not in st.session_state:
