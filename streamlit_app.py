@@ -1,26 +1,24 @@
 import streamlit as st
-import google.generativeai as genai
+import requests
+import json
 
 # Show title and description.
 st.title("💬 Chatbot")
 st.write(
-    "This is a simple chatbot that uses Google's Gemini model to generate responses. "
+    "This is a simple chatbot that uses Google's Gemini API to generate responses. "
     "To use this app, you need to provide a Gemini API key, which you can get [here](https://makersuite.google.com/app/apikey). "
 )
 
 # Ask user for their Gemini API key via `st.text_input`.
-# Alternatively, you can store the API key in `./.streamlit/secrets.toml` and access it
-# via `st.secrets`, see https://docs.streamlit.io/develop/concepts/connections/secrets-management
 gemini_api_key = st.text_input("Gemini API Key", type="password")
 
 if not gemini_api_key:
     st.info("Please add your Gemini API key to continue.", icon="🗝️")
 else:
-    # Configure the Gemini API
-    genai.configure(api_key=gemini_api_key)
+    # Gemini API endpoint
+    GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:streamGenerateContent"
     
-    # Create a session state variable to store the chat messages. This ensures that the
-    # messages persist across reruns.
+    # Create a session state variable to store the chat messages.
     if "messages" not in st.session_state:
         st.session_state.messages = []
     
@@ -29,30 +27,79 @@ else:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
     
-    # Create a chat input field to allow the user to enter a message. This will display
-    # automatically at the bottom of the page.
+    # Create a chat input field to allow the user to enter a message.
     if prompt := st.chat_input("What is up?"):
         # Store and display the current prompt.
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
         
-        # Generate a response using the Gemini API.
-        model = genai.GenerativeModel('gemini-pro')
-        
-        # Convert message history to Gemini format
-        chat_history = []
-        for m in st.session_state.messages[:-1]:  # Exclude the last user message
+        # Prepare the request payload for Gemini API
+        # Convert chat history to Gemini format
+        contents = []
+        for m in st.session_state.messages:
             role = "user" if m["role"] == "user" else "model"
-            chat_history.append({"role": role, "parts": [m["content"]]})
+            contents.append({
+                "role": role,
+                "parts": [{"text": m["content"]}]
+            })
         
-        # Start chat with history
-        chat = model.start_chat(history=chat_history)
+        payload = {
+            "contents": contents
+        }
         
-        # Stream the response to the chat using `st.write_stream`, then store it in 
-        # session state.
-        with st.chat_message("assistant"):
-            response = chat.send_message(prompt, stream=True)
-            full_response = st.write_stream(chunk.text for chunk in response)
-        
-        st.session_state.messages.append({"role": "assistant", "content": full_response})
+        # Make API request with streaming
+        try:
+            with st.chat_message("assistant"):
+                message_placeholder = st.empty()
+                full_response = ""
+                
+                # Send POST request to Gemini API with streaming
+                response = requests.post(
+                    f"{GEMINI_API_URL}?key={gemini_api_key}",
+                    headers={"Content-Type": "application/json"},
+                    json=payload,
+                    stream=True,
+                    timeout=120
+                )
+                
+                if response.status_code == 200:
+                    # Process streaming response
+                    for line in response.iter_lines():
+                        if line:
+                            line_text = line.decode('utf-8')
+                            # Remove "data: " prefix if present
+                            if line_text.startswith('data: '):
+                                line_text = line_text[6:]
+                            
+                            try:
+                                chunk_data = json.loads(line_text)
+                                # Extract text from the response
+                                if 'candidates' in chunk_data:
+                                    for candidate in chunk_data['candidates']:
+                                        if 'content' in candidate:
+                                            for part in candidate['content'].get('parts', []):
+                                                if 'text' in part:
+                                                    full_response += part['text']
+                                                    message_placeholder.markdown(full_response + "▌")
+                            except json.JSONDecodeError:
+                                continue
+                    
+                    message_placeholder.markdown(full_response)
+                else:
+                    error_message = f"API Error: {response.status_code}"
+                    try:
+                        error_data = response.json()
+                        if 'error' in error_data:
+                            error_message = error_data['error'].get('message', error_message)
+                    except:
+                        pass
+                    st.error(error_message)
+                    full_response = f"Error: {error_message}"
+            
+            # Store the assistant's response
+            st.session_state.messages.append({"role": "assistant", "content": full_response})
+            
+        except requests.exceptions.RequestException as e:
+            st.error(f"API通信エラー: {str(e)}")
+            st.session_state.messages.append({"role": "assistant", "content": f"Error: {str(e)}"})
