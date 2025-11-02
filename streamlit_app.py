@@ -13,12 +13,12 @@ st.write(
 gemini_api_key = st.text_input("Gemini API Key", type="password")
 
 # デバッグモードの追加
-debug_mode = st.checkbox("デバッグモード", value=True)
+debug_mode = st.checkbox("デバッグモード", value=False)
 
 if not gemini_api_key:
     st.info("Please add your Gemini API key to continue.", icon="🗝️")
 else:
-    # Gemini API endpoint
+    # Gemini API endpoint - ストリーミングではなく通常のエンドポイントを使用
     GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent"
     
     # Create a session state variable to store the chat messages.
@@ -57,21 +57,17 @@ else:
             st.write("**リクエストペイロード:**")
             st.json(payload)
         
-        # Make API request with streaming
+        # Make API request
         try:
             with st.chat_message("assistant"):
-                message_placeholder = st.empty()
-                full_response = ""
-                
                 if debug_mode:
                     debug_info = st.expander("デバッグ詳細")
                 
-                # Send POST request to Gemini API with streaming
+                # Send POST request to Gemini API
                 response = requests.post(
                     f"{GEMINI_API_URL}?key={gemini_api_key}",
                     headers={"Content-Type": "application/json"},
                     json=payload,
-                    stream=True,
                     timeout=120
                 )
                 
@@ -81,57 +77,31 @@ else:
                         st.write(f"**レスポンスヘッダー:** {dict(response.headers)}")
                 
                 if response.status_code == 200:
-                    line_count = 0
-                    # Process streaming response
-                    for line in response.iter_lines():
-                        if line:
-                            line_count += 1
-                            line_text = line.decode('utf-8')
-                            
-                            if debug_mode:
-                                with debug_info:
-                                    st.write(f"**受信ライン {line_count}:**")
-                                    st.code(line_text)
-                            
-                            # Remove "data: " prefix if present
-                            if line_text.startswith('data: '):
-                                line_text = line_text[6:]
-                            
-                            try:
-                                chunk_data = json.loads(line_text)
-                                
-                                if debug_mode:
-                                    with debug_info:
-                                        st.write(f"**パース済みJSON {line_count}:**")
-                                        st.json(chunk_data)
-                                
-                                # Extract text from the response
-                                if 'candidates' in chunk_data:
-                                    for candidate in chunk_data['candidates']:
-                                        if 'content' in candidate:
-                                            for part in candidate['content'].get('parts', []):
-                                                if 'text' in part:
-                                                    text_chunk = part['text']
-                                                    full_response += text_chunk
-                                                    if debug_mode:
-                                                        with debug_info:
-                                                            st.write(f"**抽出テキスト:** {text_chunk}")
-                                                    message_placeholder.markdown(full_response + "▌")
-                            except json.JSONDecodeError as je:
-                                if debug_mode:
-                                    with debug_info:
-                                        st.error(f"JSON decode error: {str(je)}")
-                                continue
+                    response_data = response.json()
                     
                     if debug_mode:
                         with debug_info:
-                            st.write(f"**総受信ライン数:** {line_count}")
-                            st.write(f"**最終レスポンス:** {full_response}")
+                            st.write("**完全なレスポンスJSON:**")
+                            st.json(response_data)
                     
-                    message_placeholder.markdown(full_response)
+                    # Extract text from the response
+                    full_response = ""
+                    if 'candidates' in response_data:
+                        for candidate in response_data['candidates']:
+                            if 'content' in candidate:
+                                for part in candidate['content'].get('parts', []):
+                                    if 'text' in part:
+                                        full_response += part['text']
                     
-                    if not full_response:
+                    if debug_mode:
+                        with debug_info:
+                            st.write(f"**抽出されたテキスト:** {full_response}")
+                    
+                    if full_response:
+                        st.markdown(full_response)
+                    else:
                         st.warning("警告: レスポンスが空です")
+                        full_response = "（応答なし）"
                 else:
                     error_message = f"API Error: {response.status_code}"
                     try:
